@@ -139,42 +139,12 @@ inline unsigned long user_stack(const struct pt_regs *regs)
 	return user_mode(regs) ? regs->sp : 0;
 }
 
-asmlinkage int sys_fork(void)
-{
-#ifndef CONFIG_MMU
-	/* fork almost works, enough to trick you into looking elsewhere:-( */
-	return -EINVAL;
-#else
-	return do_fork(SIGCHLD, user_stack(__frame), __frame, 0, NULL, NULL);
-#endif
-}
-
-asmlinkage int sys_vfork(void)
-{
-	return do_fork(CLONE_VFORK | CLONE_VM | SIGCHLD, user_stack(__frame), __frame, 0,
-		       NULL, NULL);
-}
-
-/*****************************************************************************/
-/*
- * clone a process
- * - tlsptr is retrieved by copy_thread()
- */
-asmlinkage int sys_clone(unsigned long clone_flags, unsigned long newsp,
-			 int __user *parent_tidptr, int __user *child_tidptr,
-			 int __user *tlsptr)
-{
-	if (!newsp)
-		newsp = user_stack(__frame);
-	return do_fork(clone_flags, newsp, __frame, 0, parent_tidptr, child_tidptr);
-} /* end sys_clone() */
-
 /*
  * set up the kernel stack and exception frames for a new process
  */
 int copy_thread(unsigned long clone_flags,
 		unsigned long usp, unsigned long arg,
-		struct task_struct *p, struct pt_regs *regs)
+		struct task_struct *p)
 {
 	struct pt_regs *childregs;
 
@@ -184,8 +154,6 @@ int copy_thread(unsigned long clone_flags,
 	/* set up the userspace frame (the only place that the USP is stored) */
 	*childregs = *__kernel_frame0_ptr;
 
-	p->set_child_tid = p->clear_child_tid = NULL;
-
 	p->thread.frame	 = childregs;
 	p->thread.curr	 = p;
 	p->thread.sp	 = (unsigned long) childregs;
@@ -193,7 +161,7 @@ int copy_thread(unsigned long clone_flags,
 	p->thread.lr	 = 0;
 	p->thread.frame0 = childregs;
 
-	if (unlikely(!regs)) {
+	if (unlikely(p->flags & PF_KTHREAD)) {
 		childregs->gr9 = usp; /* function */
 		childregs->gr8 = arg;
 		p->thread.pc = (unsigned long) ret_from_kernel_thread;
@@ -202,9 +170,9 @@ int copy_thread(unsigned long clone_flags,
 	}
 
 	/* set up the userspace frame (the only place that the USP is stored) */
-	*childregs = *regs;
-
-	childregs->sp		= usp;
+	*childregs = *current_pt_regs();
+	if (usp)
+		childregs->sp = usp;
 	childregs->next_frame	= NULL;
 
 	p->thread.pc = (unsigned long) ret_from_fork;
